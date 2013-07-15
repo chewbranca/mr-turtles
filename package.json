@@ -1,0 +1,21 @@
+{
+  "name": "mr-turtles",
+  "version": "0.0.0",
+  "description": "MR. Turtles - Map Reduce all the way down.",
+  "main": "turtles.js",
+  "scripts": {
+    "start": "node turtles.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chewbranca/mr-turtles.git"
+  },
+  "keywords": [
+    "couchdb",
+    "mapreduce",
+    "turtles"
+  ],
+  "author": "Russell Branca <@chewbranca>",
+  "license": "Apache V2"
+}
