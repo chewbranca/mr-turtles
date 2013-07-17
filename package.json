@@ -7,6 +7,11 @@
     "start": "node turtles.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "dependencies": {
+    "express": "3.x",
+    "request": "2.22.x",
+    "lodash": "1.3.x"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/chewbranca/mr-turtles.git"
