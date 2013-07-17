@@ -1,4 +1,10 @@
 var http = require('http');
+var _ = require('lodash');
+var request = require('request');
+var express = require('express');
+var app = express();
+
+app.use(express.bodyParser());
 
 var options = {
   host: "localhost",
@@ -6,33 +12,9 @@ var options = {
   path: "/volcanoes_mr_turtles/_design/volcanoes/_view/magnitude_breakdown?group_level=2"
 };
 
-var request = function(options, cb) {
-  var data = options.data;
-  delete options.data;
-  var resCb = function(res) {
-    var str = ''
-    res.on('data', function(chunk) {
-      str += chunk;
-    });
-    res.on('end', function() {
-      cb({
-        statusCode: res.statusCode,
-        headers: res.headers,
-        body: str
-      });
-    });
-  };
-  var req = http.request(options, resCb);
-  req.on('error', function(e) {
-    console.log('REQUEST FAILED: ' + e.message);
-    throw(e);
-  });
-  if (data) {
-    req.write(data);
-  }
-  req.end()
+var url = "http://localhost:5984/volcanoes_mr_turtles/_design/volcanoes/_view/magnitude_breakdown?group_level=2"
 
-};
+var cache = {};
 
 var Emitter = function() {
   this.results = [];
@@ -71,68 +53,103 @@ Emitter.prototype.sortResults = function(descending) {
   });
 };
 
-var saveDdoc = function(view) {
+var makeView = function(options) {
+  var key = options.id;
+  var view = {};
+  view[key] = {map: options.map};
+  if (options.reduce) {
+    view[key].reduce = options.reduce;
+  }
+  return view;
+};
+
+var saveDdoc = function(options) {
+  var view = makeView(options);
+  var url = options.target + "/_design/" + options.id;
   request({
-    host: "localhost",
-    port: 5984,
-    path: "/volcanoes_mr_turtles_results/_design/sorted_magnitude",
     method: "PUT",
-    headers: {
-      "content-type": "application/json"
-    },
-    data: JSON.stringify({views: {sorted_magnitude: view}})
-  }, function(resp) {
-    console.log("SAVE DDOC("+resp.statusCode+"+): "+resp.body);
+    url: url,
+    json: {views: view}
+  }, function(err, resp, body) {
+    if (err) console.log("DDOC ERR: "+err);
+    console.log("SAVE DDOC("+resp.statusCode+"+): "+JSON.stringify(body));
   });
 };
 
-var saveResults = function(docs) {
+var saveResults = function(options, docs) {
+  var url = options.target + "/_bulk_docs";
   request({
-    host: "localhost",
-    port: 5984,
-    path: "/volcanoes_mr_turtles_results/_bulk_docs",
     method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    data: JSON.stringify({docs: docs})
-  }, function(resp) {
-    console.log("SAVE DOCS("+resp.statusCode+"+): "+resp.body);
+    url: url,
+    json: {docs: docs}
+  }, function(err, resp, body) {
+    if (err) console.log("ERR: "+err);
+    console.log("SAVE DOCS("+resp.statusCode+"+): "+body.length);
   });
 };
 
-var runMR = function(view, rows) {
+var runMR = function(options, rows) {
   var emitter = new Emitter();
   var emit = emitter.emit.bind(emitter);
   var log = console.log;
   var ctx = {};
-  var mfun = eval('(function() { return '+view.map+'; });')();
+  var mfun = eval('(function() { return '+options.map+'; });')();
   var rfun;
-  if (view.reduce && view.reduce.charAt(0) !== '_') {
-    rfun = eval('(function() { return '+view.reduce+'; });')();
+  if (options.reduce && options.reduce.charAt(0) !== '_') {
+    rfun = eval('(function() { return '+options.reduce+'; });')();
   }
   rows.forEach(function(row) {
     emitter.setCurr(row);
     mfun(row);
   });
-  saveResults(rows);
-  saveDdoc(view);
+  saveResults(options, rows);
+  saveDdoc(options);
   return emitter.sortResults();
 };
 
-var testView = {
-  map: function(row) {
-    emit(row.value.count, row.key);
-  }
+var chainMR = function(data, cb) {
+  request.get(data.source, function(err, resp, body) {
+    console.log("GOT RESPONSE FROM: "+data.source + "("+typeof(body)+")");
+    //console.log(body);
+    cb(body);
+  });
 };
 
-request(options, function(res) {
-  console.log("STATUS: " + res.statusCode);
-  console.log("HEADERS: " + JSON.stringify(res.headers));
-  //console.log("BODY: " + res.body);
-  var data = JSON.parse(res.body);
-  console.log("FOUND " + data.rows.length + " rows");
-  var results = runMR({map: testView.map.toString()}, data.rows);
-  console.log("FOUND " + results.length + " results");
-  console.log("RESULTS: "+JSON.stringify(results));
+app.get('/_turtles', function(req, res) {
+  res.send(405, {error: "NOT IMPLEMENTED"});
 });
+
+app.get('/_turtles/:chain', function(req, res) {
+  var chain = req.params.chain;
+  if ( ! cache[chain]) {
+    res.send(404, {error: "Unknown chain: "+chain});
+  } else {
+    res.send(200, cache[chain])
+  }
+});
+
+app.post('/_turtles/chain', function(req, res) {
+  console.log("GOT DATA");
+  var body = req.body;
+  console.log(body);
+  var requiredFields = ["id", "map", "target", "source"];
+  var missingFileds = _.any(requiredFields, function(field) {
+    return ! body[field];
+  });
+  if (missingFileds) {
+    res.send(400, {error: "Missing fields"});
+  } else {
+    chainMR(body, function(resp) {
+      var data = JSON.parse(resp);
+      console.log("CHAIN MR RESPONSE: ");
+      console.log(body);
+      var sorted = runMR(body, data.rows);
+      cache[body.id] = sorted;
+      res.send(200, {data: data, sorted: sorted});
+    });
+  }
+});
+
+app.listen(8001);
+
+// curl -i localhost:8001/chain -X POST -d '{"id":"bar","source":"http://localhost:5984/volcanoes_mr_turtles/_design/volcanoes/_view/magnitude_breakdown?group_level=2","target":"http://localhost:5984/volcanoes_mr_turtles_results","map":"function(row) { emit(row.value.count, row.key); }"}' -H content-type:application/json
