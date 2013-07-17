@@ -1,0 +1,13 @@
+dist
+node_modules
+.DS_Store
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+.elc
+auto-save-list
+tramp
+.\#*
+.*.swp
+.*.swo
